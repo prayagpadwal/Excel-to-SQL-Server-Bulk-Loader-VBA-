@@ -1,0 +1,99 @@
+Sub LoadDataToSQL()
+    Dim ConnectionStr As String
+    Dim conn As Object
+    Dim cmd As Object
+    
+    Set conn = CreateObject("ADODB.Connection")
+    Set cmd = CreateObject("ADODB.Command")
+    
+    ' TODO: Replace with your SQL Server name, database name
+    ConnectionStr = "Provider=MSOLEDBSQL;Data Source=YOUR_SERVER_NAME;Initial Catalog=YOUR_DATABASE;Integrated Security=SSPI;TrustServerCertificate=Yes;"
+    
+    conn.ConnectionString = ConnectionStr
+    conn.Open
+    
+    ' Find the first sheet that has data in cell A1
+    Dim ws As Worksheet
+    Dim sheetNum As Integer
+    
+    For sheetNum = 1 To ThisWorkbook.Sheets.Count
+        Set ws = ThisWorkbook.Sheets(sheetNum)
+        If ws.Cells(1, 1).Value <> "" Then
+            Exit For
+        End If
+    Next sheetNum
+    
+    MsgBox "Using sheet: " & ws.Name, vbInformation
+    
+    Dim lastRow As Long, lastCol As Long
+    lastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
+    lastCol = ws.Cells(1, ws.Columns.Count).End(xlToLeft).Column
+    
+    MsgBox "Found " & lastRow - 1 & " rows and " & lastCol & " columns to import", vbInformation
+    
+    ' Build column list and parameter placeholders from header row
+    Dim colList As String, placeholders As String
+    Dim i As Long
+    
+    For i = 1 To lastCol
+        If i > 1 Then
+            colList = colList & ","
+            placeholders = placeholders & ","
+        End If
+        colList = colList & "[" & ws.Cells(1, i).Value & "]"
+        placeholders = placeholders & "?"
+    Next i
+    
+    ' TODO: Replace with your target table name (e.g., dbo.YourTableName)
+    Dim sql As String
+    sql = "INSERT INTO dbo.YOUR_TABLE_NAME (" & colList & ") VALUES (" & placeholders & ")"
+    
+    Debug.Print sql
+    
+    ' Prepare the parameterized insert command
+    cmd.ActiveConnection = conn
+    cmd.CommandText = sql
+    cmd.CommandType = 1  ' adCmdText
+    cmd.Prepared = True
+    
+    ' Add VARCHAR(MAX) parameters for each column
+    For i = 1 To lastCol
+        cmd.Parameters.Append cmd.CreateParameter("p" & i, 200, 1, -1)  ' 200=adVarChar, 1=adParamInput, -1=unlimited length
+    Next i
+    
+    ' Loop through data rows and insert
+    Dim rowNum As Long, colNum As Long
+    Dim startTime As Double
+    startTime = Timer
+    
+    Application.ScreenUpdating = False
+    
+    For rowNum = 2 To lastRow
+        For colNum = 1 To lastCol
+            If IsEmpty(ws.Cells(rowNum, colNum).Value) Or ws.Cells(rowNum, colNum).Value = "" Then
+                cmd.Parameters(colNum - 1).Value = Null
+            Else
+                cmd.Parameters(colNum - 1).Value = CStr(ws.Cells(rowNum, colNum).Value)
+            End If
+        Next colNum
+        
+        cmd.Execute , , 128  ' 128=adExecuteNoRecords for performance
+        
+        ' Show progress in the status bar every 5000 rows
+        If rowNum Mod 5000 = 0 Then
+            Application.StatusBar = "Inserted " & rowNum - 1 & " of " & lastRow - 1 & " rows... (" & Format((rowNum - 1) / (lastRow - 1), "0%") & ")"
+        End If
+    Next rowNum
+    
+    Application.ScreenUpdating = True
+    Application.StatusBar = False
+    
+    conn.Close
+    
+    Dim elapsedTime As Double
+    elapsedTime = Timer - startTime
+    
+    MsgBox "Upload Complete!" & vbCrLf & _
+           "Rows inserted: " & Format(lastRow - 1, "#,##0") & vbCrLf & _
+           "Time taken: " & Format(elapsedTime / 60, "0.0") & " minutes", vbInformation
+End Sub
